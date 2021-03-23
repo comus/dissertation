@@ -1,0 +1,6 @@
+node_modules
+
+patient-browser/*.json5
+
+www/index.html
+!*/.gitkeep
