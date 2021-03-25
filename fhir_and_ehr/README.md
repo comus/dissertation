@@ -47,7 +47,7 @@
     sudo chmod +x /usr/local/bin/docker-compose
     docker-compose --version
 
-    git clone https://github.com/comus/dissertation.git
+    git clone https://github.com/ChrisSchool/dissertation.git
     cd dissertation/fhir_and_ehr/src
     ```
 
