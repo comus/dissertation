@@ -1,0 +1,15 @@
+{
+  "idf.port": "/dev/cu.SLAB_USBtoUART",
+  "files.associations": {
+    "ble_mesh_example_init.h": "c",
+    "board.h": "c",
+    "esp_bt.h": "c",
+    "dirent.h": "c",
+    "cdefs.h": "c",
+    "esp_log.h": "c",
+    "types.h": "c",
+    "atomic": "cpp",
+    "chrono": "cpp",
+    "cstdint": "cpp"
+  }
+}
