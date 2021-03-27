@@ -10,6 +10,8 @@
     "types.h": "c",
     "atomic": "cpp",
     "chrono": "cpp",
-    "cstdint": "cpp"
+    "cstdint": "cpp",
+    "libcoap.h": "c",
+    "coap.h": "c"
   }
 }

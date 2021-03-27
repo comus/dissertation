@@ -18,6 +18,11 @@
 #include "esp_vfs.h"
 #include "esp_spiffs.h"
 #include "common.h"
+#include "libcoap.h"
+#include "coap_dtls.h"
+#include "coap.h"
+
+#define BUFSIZE 40
 
 #define TAG "MAIN"
 
@@ -43,6 +48,9 @@
 #define OP_STATUS_VOLUME      ESP_BLE_MESH_MODEL_OP_3(0x09, CID_ESP)
 #define OP_STATUS_SELECT      ESP_BLE_MESH_MODEL_OP_3(0x0a, CID_ESP)
 #define OP_STATUS_START       ESP_BLE_MESH_MODEL_OP_3(0x0b, CID_ESP)
+
+static coap_optlist_t *optlist = NULL;
+uint16_t tx_mid;
 
 static uint8_t dev_uuid[ESP_BLE_MESH_OCTET16_LEN];
 
@@ -237,18 +245,43 @@ static void ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
 
 void btn_click_b()
 {
+    // // 開始時
+    // esp_ble_mesh_msg_ctx_t ctx = {0};
+    // uint32_t opcode;
+    // esp_err_t err;
+    // int64_t idx = 0;
+    // int64_t time;
+
+    // // 計好 time 和 idx
+    // time = esp_timer_get_time();
+    // time = time - time % 1000 + idx;
+    // // ESP_LOGI(TAG, "current time %lldus", time);
+    // idx++;
+
+    // // 準備 msg
+    // ctx.net_idx = store.net_idx;
+    // ctx.app_idx = store.app_idx;
+    // ctx.addr = 0x000e;
+    // ctx.send_ttl = MSG_SEND_TTL;
+    // ctx.send_rel = MSG_SEND_REL;
+    // opcode = OP_SEND_B;
+
+    // // send
+    // ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x, data: %lld, (hex) 0x%016llx",
+    //     myaddr, ctx.addr, time, time);
+
+    // err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
+    //         sizeof(time), (uint8_t *)&time,
+    //         MSG_TIMEOUT, true, MSG_ROLE);
+    // if (err != ESP_OK) {
+    //     ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
+    //     return;
+    // }
+
     // 開始時
     esp_ble_mesh_msg_ctx_t ctx = {0};
     uint32_t opcode;
     esp_err_t err;
-    int64_t idx = 0;
-    int64_t time;
-
-    // 計好 time 和 idx
-    time = esp_timer_get_time();
-    time = time - time % 1000 + idx;
-    // ESP_LOGI(TAG, "current time %lldus", time);
-    idx++;
 
     // 準備 msg
     ctx.net_idx = store.net_idx;
@@ -258,17 +291,81 @@ void btn_click_b()
     ctx.send_rel = MSG_SEND_REL;
     opcode = OP_SEND_B;
 
+    static coap_uri_t uri;
+    const char       *server_uri = "coap://localhost/test";
+
+    coap_set_log_level(0);
+
+    unsigned char _buf[BUFSIZE];
+    unsigned char *buf;
+    size_t buflen;
+    int res;
+    coap_pdu_t *request = NULL;
+
+    optlist = NULL;
+
+    if (coap_split_uri((const uint8_t *)server_uri, strlen(server_uri), &uri) == -1) {
+        ESP_LOGE(TAG, "CoAP server uri error");
+        return;
+    }
+
+    if (uri.path.length) {
+        buflen = BUFSIZE;
+        buf = _buf;
+        res = coap_split_path(uri.path.s, uri.path.length, buf, &buflen);
+
+        while (res--) {
+            coap_insert_optlist(&optlist,
+                                coap_new_optlist(COAP_OPTION_URI_PATH,
+                                                    coap_opt_length(buf),
+                                                    coap_opt_value(buf)));
+
+            buf += coap_opt_size(buf);
+        }
+    }
+
+    if (uri.query.length) {
+        buflen = BUFSIZE;
+        buf = _buf;
+        res = coap_split_query(uri.query.s, uri.query.length, buf, &buflen);
+
+        while (res--) {
+            coap_insert_optlist(&optlist,
+                                coap_new_optlist(COAP_OPTION_URI_QUERY,
+                                                    coap_opt_length(buf),
+                                                    coap_opt_value(buf)));
+
+            buf += coap_opt_size(buf);
+        }
+    }
+
+    prng((unsigned char *)&tx_mid, sizeof(tx_mid));
+    request = coap_pdu_init(0, 0, 0, 1152 - 4);
+    request->type = COAP_MESSAGE_CON;
+    request->tid = ++tx_mid;
+    request->code = COAP_REQUEST_GET;
+    coap_add_optlist_pdu(request, &optlist);
+    coap_pdu_encode_header(request, COAP_PROTO_UDP);
+
     // send
-    ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x, data: %lld, (hex) 0x%016llx",
-        myaddr, ctx.addr, time, time);
+    ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x",
+        myaddr, ctx.addr);
 
     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-            sizeof(time), (uint8_t *)&time,
+            request->used_size + request->hdr_size, request->token - request->hdr_size,
             MSG_TIMEOUT, true, MSG_ROLE);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
         return;
     }
+
+    if (optlist) {
+        coap_delete_optlist(optlist);
+        optlist = NULL;
+    }
+    coap_cleanup();
+
+    ESP_LOGI("coap", "send");
 }
 
 void btn_click_a()
