@@ -4,12 +4,12 @@
 
 #define TAG "BOARD"
 
-extern void btn_click_a();
+// extern void btn_click_a();
 extern void btn_click_b();
-extern void btn_click_menu();
-extern void btn_click_volume();
-extern void btn_click_select();
-extern void btn_click_start();
+// extern void btn_click_menu();
+// extern void btn_click_volume();
+// extern void btn_click_select();
+// extern void btn_click_start();
 
 static void board_button_init(void)
 {

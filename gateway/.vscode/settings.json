@@ -11,6 +11,9 @@
     "atomic": "cpp",
     "chrono": "cpp",
     "cstdint": "cpp",
-    "esp_ble_mesh_networking_api.h": "c"
+    "esp_ble_mesh_networking_api.h": "c",
+    "esp_ble_mesh_defs.h": "c",
+    "ble_mesh_example_nvs.h": "c",
+    "time.h": "c"
   }
 }

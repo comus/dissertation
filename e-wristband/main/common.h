@@ -18,5 +18,6 @@ void FillTestRed(TFT_t * dev, int width, int height);
 void FillTestGreen(TFT_t * dev, int width, int height);
 void FillTestBlue(TFT_t * dev, int width, int height);
 void logger(char * str, uint16_t color);
+TickType_t ScrollTest(TFT_t * dev, FontxFile *fx, int width, int height);
 
 #endif

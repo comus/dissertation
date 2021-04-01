@@ -86,3 +86,35 @@ void logger(char * str, uint16_t color) {
     if (ypos > ymax) ypos = fontHeight*2-1;
     i++;
 }
+
+TickType_t ScrollTest(TFT_t * dev, FontxFile *fx, int width, int height) {
+	TickType_t startTick, endTick, diffTick;
+	startTick = xTaskGetTickCount();
+
+	// get font width & height
+	uint8_t buffer[FontxGlyphBufSize];
+	GetFontx(fx, 0, buffer, &fontWidth, &fontHeight);
+	ESP_LOGD(__FUNCTION__,"fontWidth=%d fontHeight=%d",fontWidth,fontHeight);
+
+	lines = (height - fontHeight) / fontHeight;
+	ESP_LOGD(__FUNCTION__, "height=%d fontHeight=%d lines=%d", height, fontHeight, lines);
+	ymax = (lines+1) * fontHeight;
+	ESP_LOGD(__FUNCTION__, "ymax=%d",ymax);
+
+	lcdSetFontDirection(dev, 0);
+	lcdFillScreen(dev, BLACK);
+
+	strcpy((char *)ascii, "GATEWAY");
+	lcdDrawString(dev, fx, 0, fontHeight-1, ascii, GREEN);
+
+    vsp = fontHeight*2;
+    ypos = fontHeight*2-1;
+
+	// Initialize scroll area
+	//lcdSetScrollArea(dev, 0, 0x0140, 0);
+
+	endTick = xTaskGetTickCount();
+	diffTick = endTick - startTick;
+	ESP_LOGI(__FUNCTION__, "elapsed time[ms]:%d",diffTick*portTICK_RATE_MS);
+	return diffTick;
+}

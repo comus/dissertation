@@ -3,10 +3,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 #include <inttypes.h>
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_system.h"
+#include "esp_event.h"
 #include "esp_bt.h"
+#include "esp_timer.h"
 #include "esp_ble_mesh_defs.h"
 #include "esp_ble_mesh_common_api.h"
 #include "esp_ble_mesh_provisioning_api.h"
@@ -21,6 +25,8 @@
 #include "libcoap.h"
 #include "coap_dtls.h"
 #include "coap.h"
+#include "protocol_examples_common.h"
+#include "esp_sntp.h"
 
 #define BUFSIZE 40
 
@@ -36,21 +42,17 @@
 #define ESP_BLE_MESH_VND_MODEL_ID_CLIENT    0x0000
 #define ESP_BLE_MESH_VND_MODEL_ID_SERVER    0x0001
 
-#define OP_SEND_A           ESP_BLE_MESH_MODEL_OP_3(0x00, CID_ESP)
-#define OP_SEND_B           ESP_BLE_MESH_MODEL_OP_3(0x01, CID_ESP)
-#define OP_SEND_MENU        ESP_BLE_MESH_MODEL_OP_3(0x02, CID_ESP)
-#define OP_SEND_VOLUME      ESP_BLE_MESH_MODEL_OP_3(0x03, CID_ESP)
-#define OP_SEND_SELECT      ESP_BLE_MESH_MODEL_OP_3(0x04, CID_ESP)
-#define OP_SEND_START       ESP_BLE_MESH_MODEL_OP_3(0x05, CID_ESP)
-#define OP_STATUS_A           ESP_BLE_MESH_MODEL_OP_3(0x06, CID_ESP)
-#define OP_STATUS_B           ESP_BLE_MESH_MODEL_OP_3(0x07, CID_ESP)
-#define OP_STATUS_MENU        ESP_BLE_MESH_MODEL_OP_3(0x08, CID_ESP)
-#define OP_STATUS_VOLUME      ESP_BLE_MESH_MODEL_OP_3(0x09, CID_ESP)
-#define OP_STATUS_SELECT      ESP_BLE_MESH_MODEL_OP_3(0x0a, CID_ESP)
-#define OP_STATUS_START       ESP_BLE_MESH_MODEL_OP_3(0x0b, CID_ESP)
+#define OP_REQ           ESP_BLE_MESH_MODEL_OP_3(0x01, CID_ESP)
+#define OP_RES           ESP_BLE_MESH_MODEL_OP_3(0x02, CID_ESP)
+
+time_t now;
+struct tm timeinfo;
+struct timeval tv_now;
+
+char str[30];
 
 static coap_optlist_t *optlist = NULL;
-uint16_t tx_mid;
+uint16_t tx_mid = 0;
 
 static uint8_t dev_uuid[ESP_BLE_MESH_OCTET16_LEN];
 
@@ -71,8 +73,8 @@ static const char * NVS_KEY = "vendor_client";
 
 static esp_ble_mesh_cfg_srv_t config_server = {
     .relay = ESP_BLE_MESH_RELAY_ENABLED,
-    .beacon = ESP_BLE_MESH_BEACON_ENABLED,
-    .friend_state = ESP_BLE_MESH_FRIEND_ENABLED,
+    .beacon = ESP_BLE_MESH_BEACON_DISABLED,
+    .friend_state = ESP_BLE_MESH_FRIEND_NOT_SUPPORTED,
     .gatt_proxy = ESP_BLE_MESH_GATT_PROXY_NOT_SUPPORTED,
     .default_ttl = 7,
     /* 3 transmissions with 20ms interval */
@@ -81,12 +83,6 @@ static esp_ble_mesh_cfg_srv_t config_server = {
 };
 
 static const esp_ble_mesh_client_op_pair_t vnd_op_pair[] = {
-    { OP_SEND_A, OP_STATUS_A },
-    { OP_SEND_B, OP_STATUS_B },
-    { OP_SEND_MENU, OP_STATUS_MENU },
-    { OP_SEND_VOLUME, OP_STATUS_VOLUME },
-    { OP_SEND_SELECT, OP_STATUS_SELECT },
-    { OP_SEND_START, OP_STATUS_START },
 };
 
 static esp_ble_mesh_client_t vendor_client = {
@@ -96,18 +92,8 @@ static esp_ble_mesh_client_t vendor_client = {
 
 // 有人傳東西給 device，這是他允許接收的指令
 static esp_ble_mesh_model_op_t vnd_op[] = {
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_A, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_B, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_MENU, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_VOLUME, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_SELECT, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_SEND_START, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_A, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_B, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_MENU, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_VOLUME, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_SELECT, 2),
-    ESP_BLE_MESH_MODEL_OP(OP_STATUS_START, 2),
+    ESP_BLE_MESH_MODEL_OP(OP_REQ, 2),
+    ESP_BLE_MESH_MODEL_OP(OP_RES, 2),
     ESP_BLE_MESH_MODEL_OP_END,
 };
 
@@ -170,11 +156,12 @@ static void prov_complete(uint16_t net_idx, uint16_t addr, uint8_t flags, uint32
 
     // 不同的 node 有不同的顏色或者文字顯示在 LCD
     if (myaddr == 0x000d) {
-        FillTestRed(&dev, CONFIG_WIDTH, CONFIG_HEIGHT);
+        // FillTestRed(&dev, CONFIG_WIDTH, CONFIG_HEIGHT);
+        logger("prov_complete!!!", RED);
     } else if (myaddr == 0x000e) {
-        FillTestGreen(&dev, CONFIG_WIDTH, CONFIG_HEIGHT);
+        // FillTestGreen(&dev, CONFIG_WIDTH, CONFIG_HEIGHT);
     } else {
-        FillTestBlack(&dev, CONFIG_WIDTH, CONFIG_HEIGHT);
+        logger("prov_complete!!!", PURPLE);
     }
 }
 
@@ -243,64 +230,162 @@ static void ble_mesh_config_server_cb(esp_ble_mesh_cfg_server_cb_event_t event,
     }
 }
 
+uint8_t action = 0;
+uint16_t count = 0;
+uint8_t retry = 0;
+
+esp_ble_mesh_msg_ctx_t ctx = {0};
+uint32_t opcode;
+esp_err_t err;
+static coap_uri_t uri;
+const char *server_uri = "coap://localhost";
+
+unsigned char _buf[BUFSIZE];
+unsigned char *buf;
+size_t buflen;
+int res;
+coap_pdu_t *request = NULL;
+
 void btn_click_b()
 {
-    // // 開始時
-    // esp_ble_mesh_msg_ctx_t ctx = {0};
-    // uint32_t opcode;
-    // esp_err_t err;
-    // int64_t idx = 0;
-    // int64_t time;
+    // while (1)
+    // {
+        coap_set_log_level(CONFIG_COAP_LOG_DEFAULT_LEVEL);
 
-    // // 計好 time 和 idx
-    // time = esp_timer_get_time();
-    // time = time - time % 1000 + idx;
-    // // ESP_LOGI(TAG, "current time %lldus", time);
-    // idx++;
+        optlist = NULL;
 
-    // // 準備 msg
-    // ctx.net_idx = store.net_idx;
-    // ctx.app_idx = store.app_idx;
-    // ctx.addr = 0x000e;
-    // ctx.send_ttl = MSG_SEND_TTL;
-    // ctx.send_rel = MSG_SEND_REL;
-    // opcode = OP_SEND_B;
+        if (coap_split_uri((const uint8_t *)server_uri, strlen(server_uri), &uri) == -1) {
+            ESP_LOGE(TAG, "CoAP server uri error");
+            return;
+        }
 
-    // // send
-    // ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x, data: %lld, (hex) 0x%016llx",
-    //     myaddr, ctx.addr, time, time);
+        if (uri.path.length) {
+            buflen = BUFSIZE;
+            buf = _buf;
+            res = coap_split_path(uri.path.s, uri.path.length, buf, &buflen);
 
-    // err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-    //         sizeof(time), (uint8_t *)&time,
-    //         MSG_TIMEOUT, true, MSG_ROLE);
-    // if (err != ESP_OK) {
-    //     ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-    //     return;
+            while (res--) {
+                coap_insert_optlist(&optlist,
+                                    coap_new_optlist(COAP_OPTION_URI_PATH,
+                                                        coap_opt_length(buf),
+                                                        coap_opt_value(buf)));
+
+                buf += coap_opt_size(buf);
+            }
+        }
+
+        if (uri.query.length) {
+            buflen = BUFSIZE;
+            buf = _buf;
+            res = coap_split_query(uri.query.s, uri.query.length, buf, &buflen);
+
+            while (res--) {
+                coap_insert_optlist(&optlist,
+                                    coap_new_optlist(COAP_OPTION_URI_QUERY,
+                                                        coap_opt_length(buf),
+                                                        coap_opt_value(buf)));
+
+                buf += coap_opt_size(buf);
+            }
+        }
+
+        if (tx_mid == 0) {
+            prng((unsigned char *)&tx_mid, sizeof(tx_mid));
+        }
+        
+        request = coap_pdu_init(0, 0, 0, 1152 - 4);
+        request->type = COAP_MESSAGE_NON;
+        request->tid = ++tx_mid;
+        request->code = COAP_REQUEST_GET;
+
+        // uint8_t token[1];
+        // prng(token, 1);
+        uint8_t token[3];
+        count++;
+        token[0] = (uint8_t)(count >> 8);
+        token[1] = (uint8_t)(count);
+        token[2] = 0;
+        coap_add_token(request, 3, token);
+
+        coap_add_optlist_pdu(request, &optlist);
+
+        gettimeofday(&tv_now, NULL);
+        int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617120000000;
+        uint32_t t = (uint32_t) cpu_time;
+
+        ESP_LOGI(TAG, "The current time is:");
+        ESP_LOGI(TAG, "%" PRIu32 "", t);
+
+        uint8_t payload[8];
+        payload[0] = (uint8_t)(t >> 24);
+        payload[1] = (uint8_t)(t >> 16);
+        payload[2] = (uint8_t)(t >> 8);
+        payload[3] = (uint8_t)(t);
+        payload[4] = (uint8_t)(t >> 24);
+        payload[5] = (uint8_t)(t >> 16);
+        payload[6] = (uint8_t)(t >> 8);
+        payload[7] = (uint8_t)(t);
+        coap_add_data(request, 8, payload);
+
+        coap_pdu_encode_header(request, COAP_PROTO_UDP);
+
+        bool need_rsp = false;
+
+        // 準備 msg
+        ctx.net_idx = store.net_idx;
+        ctx.app_idx = store.app_idx;
+        ctx.addr = 0xffff;
+        ctx.send_ttl = MSG_SEND_TTL;
+        ctx.send_rel = MSG_SEND_REL;
+        opcode = OP_REQ;
+
+        // send
+        ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x",
+            myaddr, ctx.addr);
+
+        sprintf(str, "a: %d, send: %u", action, count);
+        logger(str, BLUE);
+
+        err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
+                request->used_size + request->hdr_size, request->token - request->hdr_size,
+                MSG_TIMEOUT, need_rsp, MSG_ROLE);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
+        }
+
+        if (optlist) {
+            coap_delete_optlist(optlist);
+            optlist = NULL;
+        }
+        if (request) {
+            coap_delete_pdu(request);
+            request = NULL;
+        }
+        coap_cleanup();
+
+        ESP_LOGI("coap", "send\n\n");
+
+        // vTaskDelay(1000 / portTICK_PERIOD_MS);
     // }
+}
 
-    // 開始時
-    esp_ble_mesh_msg_ctx_t ctx = {0};
-    uint32_t opcode;
-    esp_err_t err;
+esp_timer_handle_t timer;
 
-    // 準備 msg
-    ctx.net_idx = store.net_idx;
-    ctx.app_idx = store.app_idx;
-    ctx.addr = 0x000e;
-    ctx.send_ttl = MSG_SEND_TTL;
-    ctx.send_rel = MSG_SEND_REL;
-    opcode = OP_SEND_B;
+void btn_click_a()
+{
+    if (action == 2 || action == 0) {
+        // 比佢入
+        if (action == 0) {
+            count = 0;
+        }
+    } else {
+        ESP_LOGE(TAG, "wait action complete!!!");
+        logger("wait action complete!!!", RED);
+        return;
+    }
+    action = 2;
 
-    static coap_uri_t uri;
-    const char       *server_uri = "coap://localhost/test";
-
-    coap_set_log_level(0);
-
-    unsigned char _buf[BUFSIZE];
-    unsigned char *buf;
-    size_t buflen;
-    int res;
-    coap_pdu_t *request = NULL;
+    coap_set_log_level(CONFIG_COAP_LOG_DEFAULT_LEVEL);
 
     optlist = NULL;
 
@@ -339,270 +424,110 @@ void btn_click_b()
         }
     }
 
-    prng((unsigned char *)&tx_mid, sizeof(tx_mid));
+    if (tx_mid == 0) {
+        prng((unsigned char *)&tx_mid, sizeof(tx_mid));
+    }
+
     request = coap_pdu_init(0, 0, 0, 1152 - 4);
     request->type = COAP_MESSAGE_CON;
     request->tid = ++tx_mid;
     request->code = COAP_REQUEST_GET;
+
+    // uint8_t token[1];
+    // prng(token, 1);
+    uint8_t token[3];
+    count++;
+    token[0] = (uint8_t)(count >> 8);
+    token[1] = (uint8_t)(count);
+    token[2] = 0;
+    coap_add_token(request, 3, token);
+
     coap_add_optlist_pdu(request, &optlist);
+
+    gettimeofday(&tv_now, NULL);
+    int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617120000000;
+    uint32_t t = (uint32_t) cpu_time;
+
+    ESP_LOGI(TAG, "The current time is:");
+    ESP_LOGI(TAG, "%" PRIu32 "", t);
+
+    uint8_t payload[8];
+    payload[0] = (uint8_t)(t >> 24);
+    payload[1] = (uint8_t)(t >> 16);
+    payload[2] = (uint8_t)(t >> 8);
+    payload[3] = (uint8_t)(t);
+    payload[4] = (uint8_t)(t >> 24);
+    payload[5] = (uint8_t)(t >> 16);
+    payload[6] = (uint8_t)(t >> 8);
+    payload[7] = (uint8_t)(t);
+    coap_add_data(request, 8, payload);
+
     coap_pdu_encode_header(request, COAP_PROTO_UDP);
 
+    bool need_rsp = false;
+
+    // 準備 msg
+    ctx.net_idx = store.net_idx;
+    ctx.app_idx = store.app_idx;
+    ctx.addr = 0xffff;
+    ctx.send_ttl = MSG_SEND_TTL;
+    ctx.send_rel = MSG_SEND_REL;
+    opcode = OP_REQ;
+
     // send
-    ESP_LOGI("btn_click_b", "send, src 0x%04x, dst 0x%04x",
+    ESP_LOGI("btn_click_a", "send, src 0x%04x, dst 0x%04x",
         myaddr, ctx.addr);
+
+    sprintf(str, "a: %d, send: %u", action, count);
+    logger(str, BLUE);
 
     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
             request->used_size + request->hdr_size, request->token - request->hdr_size,
-            MSG_TIMEOUT, true, MSG_ROLE);
+            MSG_TIMEOUT, need_rsp, MSG_ROLE);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-        return;
     }
 
     if (optlist) {
         coap_delete_optlist(optlist);
         optlist = NULL;
     }
+    if (request) {
+        coap_delete_pdu(request);
+        request = NULL;
+    }
     coap_cleanup();
 
-    ESP_LOGI("coap", "send");
-}
+    ESP_LOGI("coap", "send\n\n");
 
-void btn_click_a()
-{
-    // 開始時
-    esp_ble_mesh_msg_ctx_t ctx = {0};
-    uint32_t opcode;
-    esp_err_t err;
-    int64_t idx = 0;
-    int64_t time;
-
-    // // loop 時
-    // for (int i = 0; i < 100; ++i) {
-        // 計好 time 和 idx
-        time = esp_timer_get_time();
-        time = time - time % 1000 + idx;
-        // ESP_LOGI(TAG, "%d, current time %lldus", i, time);
-        idx++;
-
-        // 準備 msg
-        ctx.net_idx = store.net_idx;
-        ctx.app_idx = store.app_idx;
-        ctx.addr = 0x000e;
-        ctx.send_ttl = MSG_SEND_TTL;
-        ctx.send_rel = MSG_SEND_REL;
-        opcode = OP_SEND_A;
-
-        // send
-        ESP_LOGI("btn_click_a", "send, src 0x%04x, dst 0x%04x, data: %lld, (hex) 0x%016llx",
-            myaddr, ctx.addr, time, time);
-
-        err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-                sizeof(time), (uint8_t *)&time,
-                MSG_TIMEOUT, true, MSG_ROLE);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-            return;
-        }
-
-        // 等時間
-        // vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // }
+    esp_timer_stop(timer);
+    ESP_ERROR_CHECK(esp_timer_start_once(timer, 3000000));
 }
 
 void btn_click_menu()
 {
-    // 開始時
-    esp_ble_mesh_msg_ctx_t ctx = {0};
-    uint32_t opcode;
-    esp_err_t err;
-    int64_t idx = 0;
-    int64_t time;
-    int64_t time2[2];
-
-    // for (int i = 0; i < 100; ++i) {
-        // 計好 time 和 idx
-        time = esp_timer_get_time();
-        time = time - time % 1000 + idx;
-        // ESP_LOGI(TAG, "current time %lldus", time);
-        idx++;
-
-        // 準備 msg
-        ctx.net_idx = store.net_idx;
-        ctx.app_idx = store.app_idx;
-        ctx.addr = 0x000e;
-        ctx.send_ttl = MSG_SEND_TTL;
-        ctx.send_rel = MSG_SEND_REL;
-        opcode = OP_SEND_MENU;
-
-        // send
-        ESP_LOGI("btn_click_menu", "send, src 0x%04x, dst 0x%04x, data: %lld, (hex) 0x%016llx",
-            myaddr, ctx.addr, time, time);
-
-        time2[0] = time;
-        time2[1] = time;
-        err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-                sizeof(time2), (uint8_t *)&time2,
-                MSG_TIMEOUT, true, MSG_ROLE);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-            return;
-        }
-
-        // 等時間
-    //     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // }
 }
 
 void btn_click_volume()
 {
-    // // 開始時
-    // esp_ble_mesh_msg_ctx_t ctx = {0};
-    // uint32_t opcode;
-    // esp_err_t err;
-    // int64_t idx = 0;
-    // int64_t time;
-    // int64_t time4[4];
-
-    // for (int i = 0; i < 100; ++i) {
-    //     // 計好 time 和 idx
-    //     time = esp_timer_get_time();
-    //     time = time - time % 1000 + idx;
-    //     // ESP_LOGI(TAG, "current time %lldus", time);
-    //     idx++;
-
-    //     // 準備 msg
-    //     ctx.net_idx = store.net_idx;
-    //     ctx.app_idx = store.app_idx;
-    //     ctx.addr = 0xffff;
-    //     ctx.send_ttl = MSG_SEND_TTL;
-    //     ctx.send_rel = MSG_SEND_REL;
-    //     opcode = OP_SEND_VOLUME;
-
-    //     // send
-    //     // ESP_LOGI(TAG, "send, net_idx 0x%04x, app_idx 0x%04x",
-    //         // store.net_idx, store.app_idx);
-    //     time4[0] = time;
-    //     time4[1] = time;
-    //     time4[2] = time;
-    //     time4[3] = time;
-    //     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-    //             sizeof(time4), (uint8_t *)&time4,
-    //             MSG_TIMEOUT, true, MSG_ROLE);
-    //     if (err != ESP_OK) {
-    //         // ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-    //         return;
-    //     }
-
-    //     // 等時間
-    //     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // }
 }
 
 void btn_click_select()
 {
-    // // 開始時
-    // esp_ble_mesh_msg_ctx_t ctx = {0};
-    // uint32_t opcode;
-    // esp_err_t err;
-    // int64_t idx = 0;
-    // int64_t time;
-    // int64_t time8[8];
-
-    // for (int i = 0; i < 100; ++i) {
-    //     // 計好 time 和 idx
-    //     time = esp_timer_get_time();
-    //     time = time - time % 1000 + idx;
-    //     // ESP_LOGI(TAG, "current time %lldus", time);
-    //     idx++;
-
-    //     // 準備 msg
-    //     ctx.net_idx = store.net_idx;
-    //     ctx.app_idx = store.app_idx;
-    //     ctx.addr = 0xffff;
-    //     ctx.send_ttl = MSG_SEND_TTL;
-    //     ctx.send_rel = MSG_SEND_REL;
-    //     opcode = OP_SEND_SELECT;
-
-    //     // send
-    //     // ESP_LOGI(TAG, "send, net_idx 0x%04x, app_idx 0x%04x",
-    //         // store.net_idx, store.app_idx);
-    //     time8[0] = time;
-    //     time8[1] = time;
-    //     time8[2] = time;
-    //     time8[3] = time;
-    //     time8[4] = time;
-    //     time8[5] = time;
-    //     time8[6] = time;
-    //     time8[7] = time;
-    //     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-    //             sizeof(time8), (uint8_t *)&time8,
-    //             MSG_TIMEOUT, true, MSG_ROLE);
-    //     if (err != ESP_OK) {
-    //         // ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-    //         return;
-    //     }
-
-    //     // 等時間
-    //     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // }
 }
 
 void btn_click_start()
 {
-    // // 開始時
-    // esp_ble_mesh_msg_ctx_t ctx = {0};
-    // uint32_t opcode;
-    // esp_err_t err;
-    // int64_t idx = 0;
-    // int64_t time;
-    // int64_t time16[16];
+}
 
-    // for (int i = 0; i < 100; ++i) {
-    //     // 計好 time 和 idx
-    //     time = esp_timer_get_time();
-    //     time = time - time % 1000 + idx;
-    //     // ESP_LOGI(TAG, "current time %lldus", time);
-    //     idx++;
-
-    //     // 準備 msg
-    //     ctx.net_idx = store.net_idx;
-    //     ctx.app_idx = store.app_idx;
-    //     ctx.addr = 0xffff;
-    //     ctx.send_ttl = MSG_SEND_TTL;
-    //     ctx.send_rel = MSG_SEND_REL;
-    //     opcode = OP_SEND_START;
-
-    //     // send
-    //     // ESP_LOGI(TAG, "send, net_idx 0x%04x, app_idx 0x%04x",
-    //         // store.net_idx, store.app_idx);
-    //     time16[0] = time;
-    //     time16[1] = time;
-    //     time16[2] = time;
-    //     time16[3] = time;
-    //     time16[4] = time;
-    //     time16[5] = time;
-    //     time16[6] = time;
-    //     time16[7] = time;
-    //     time16[8] = time;
-    //     time16[9] = time;
-    //     time16[10] = time;
-    //     time16[11] = time;
-    //     time16[12] = time;
-    //     time16[13] = time;
-    //     time16[14] = time;
-    //     time16[15] = time;
-    //     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-    //             sizeof(time16), (uint8_t *)&time16,
-    //             MSG_TIMEOUT, true, MSG_ROLE);
-    //     if (err != ESP_OK) {
-    //         // ESP_LOGE(TAG, "Failed to send vendor message 0x%06x", opcode);
-    //         return;
-    //     }
-        
-    //     // 等時間
-    //     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // }
+static void timer_callback(void* arg)
+{
+    ESP_LOGI(TAG, "\n\n!!!!!!!!!!!!!! timeout timer called !!!!!!!!!!!!!\n\n");
+    if (action == 2) {
+        count--;
+        retry++;
+        btn_click_a();
+    }
 }
 
 static void ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event,
@@ -621,61 +546,23 @@ static void ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event,
         break;
     case ESP_BLE_MESH_CLIENT_MODEL_RECV_PUBLISH_MSG_EVT:;
         ESP_LOGI(TAG, "Receive publish message 0x%06x", param->client_recv_publish_msg.opcode);
-        // ESP_LOGI(TAG, "event 0x%02x, opcode 0x%04x, src 0x%04x, dst 0x%04x",
-        // event, param->client_recv_publish_msg.ctx->recv_op, param->client_recv_publish_msg.ctx->addr, param->client_recv_publish_msg.ctx->recv_dst);
+        ESP_LOG_BUFFER_HEX("recv data", param->client_recv_publish_msg.msg, param->client_recv_publish_msg.length);
 
-        // uint16_t srcaddr = param->client_recv_publish_msg.ctx->addr;
-        // uint16_t dstaddr = param->client_recv_publish_msg.ctx->recv_dst;
-
-        // // 收到有人被按了a的訊息
-        // if (param->client_recv_publish_msg.opcode == OP_SEND_A) {
-        //     // 如果是被按的是自己，我不關心
-        //     if (srcaddr == myaddr) {
-        //         // nothing
-        //     } else {
-                
-        //     }
-        //     // 將結果輸出到 serial
-        //     int64_t time = *(int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[!]", ",0x%06x,%lld", param->client_recv_publish_msg.opcode, time);
-        // }
-
-        // // 收到有人被按了b的訊息
-        // if (param->client_recv_publish_msg.opcode == OP_SEND_B) {
-        //     int64_t time = *(int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[#]", ",0x%06x,%lld", param->client_recv_publish_msg.opcode, time);
-        // }
-
-        // if (param->client_recv_publish_msg.opcode == ESP_BLE_MESH_VND_MODEL_OP_STATUS2) {
-        //     int64_t *time = (int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[2]", ",0x%06x,%lld,%lld", param->client_recv_publish_msg.opcode, *time, *(time + 1));
-        // }
-
-        // if (param->client_recv_publish_msg.opcode == ESP_BLE_MESH_VND_MODEL_OP_STATUS4) {
-        //     int64_t *time = (int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[4]", ",0x%06x,%lld,%lld,%lld,%lld", param->client_recv_publish_msg.opcode, *time, *(time + 1), *(time + 2), *(time + 3));
-        // }
-
-        // if (param->client_recv_publish_msg.opcode == ESP_BLE_MESH_VND_MODEL_OP_STATUS8) {
-        //     int64_t *time = (int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[8]", ",0x%06x,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld", param->client_recv_publish_msg.opcode, *time, *(time + 1), *(time + 2), *(time + 3), *(time + 4), *(time + 5), *(time + 6), *(time + 7));
-        // }
-
-        // if (param->client_recv_publish_msg.opcode == ESP_BLE_MESH_VND_MODEL_OP_STATUS16) {
-        //     int64_t *time = (int64_t *)param->client_recv_publish_msg.msg;
-        //     ESP_LOGI("[16]", ",0x%06x,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld", param->client_recv_publish_msg.opcode, *time, *(time + 1), *(time + 2), *(time + 3), *(time + 4), *(time + 5), *(time + 6), *(time + 7), *(time + 8), *(time + 9), *(time + 10), *(time + 11), *(time + 12), *(time + 13), *(time + 14), *(time + 15));
-        // }
+        if (param->client_recv_publish_msg.opcode == OP_RES) {
+            if (myaddr == 0x000d) {
+                if (action == 2) {
+                    ESP_LOGI("[2]", ",0x%06x", param->client_recv_publish_msg.opcode);
+                    esp_timer_stop(timer);
+                    vTaskDelay(200 / portTICK_PERIOD_MS);
+                    retry = 0;
+                    btn_click_a();
+                }
+            }
+        }
 
         break;
     case ESP_BLE_MESH_CLIENT_MODEL_SEND_TIMEOUT_EVT:
         ESP_LOGW(TAG, "Client message 0x%06x timeout", param->client_send_timeout.opcode);
-        if (param->client_send_timeout.opcode == OP_SEND_B) {
-            btn_click_b();
-        } else if (param->client_send_timeout.opcode == OP_SEND_A) {
-            btn_click_a();
-        } else if (param->client_send_timeout.opcode == OP_SEND_MENU) {
-            btn_click_menu();
-        }
         break;
     default:
         break;
@@ -711,6 +598,11 @@ static esp_err_t ble_mesh_init(void)
     ESP_LOGI(TAG, "BLE Mesh Node initialized");
 
     return ESP_OK;
+}
+
+void time_sync_notification_cb(struct timeval *tv)
+{
+    ESP_LOGI(TAG, "Notification of a time synchronization event");
 }
 
 void app_main(void)
@@ -757,9 +649,12 @@ void app_main(void)
     uint16_t model = 0x9341;
     lcdInit(&dev, model, CONFIG_WIDTH, CONFIG_HEIGHT, CONFIG_OFFSETX, CONFIG_OFFSETY);
 
+    ScrollTest(&dev, fx16G, CONFIG_WIDTH, CONFIG_HEIGHT);
+
     esp_err_t err;
 
     ESP_LOGI(TAG, "Initializing...");
+    logger("Initializing...", BLUE);
 
     err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
@@ -767,6 +662,44 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK( esp_event_loop_create_default() );
+    ESP_ERROR_CHECK(example_connect());
+
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    // Is time set? If not, tm_year will be (1970 - 1900).
+    if (timeinfo.tm_year < (2016 - 1900)) {
+        ESP_LOGI(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
+
+        ESP_LOGI(TAG, "Initializing SNTP");
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_setservername(0, "pool.ntp.org");
+        sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+        sntp_init();
+
+        // wait for time to be set
+        while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET) {
+            ESP_LOGI(TAG, "Waiting for system time to be set...");
+            vTaskDelay(2000 / portTICK_PERIOD_MS);
+        }
+
+        ESP_ERROR_CHECK( example_disconnect() );
+    }
+
+    setenv("TZ", "CST-8", 1);
+    tzset();
+    localtime_r(&now, &timeinfo);
+
+    gettimeofday(&tv_now, NULL);
+    int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617033600000;
+    uint32_t t = (uint32_t) cpu_time;
+
+    ESP_LOGI(TAG, "The current time is:");
+    ESP_LOGI(TAG, "%" PRIu32 "\n", t);
+    sprintf(str, "time: %u", t);
+    logger(str, BLUE);
 
     board_init();
 
@@ -788,4 +721,12 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Bluetooth mesh init failed (err %d)", err);
     }
+
+    const esp_timer_create_args_t timer_args = {
+            .callback = &timer_callback,
+            /* name is optional, but may help identify the timer when debugging */
+            .name = "periodic"
+    };
+
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer));
 }
