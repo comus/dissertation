@@ -40,3 +40,6 @@ uncomment 掉這些程式碼，以一開始用 wifi 獲取時間
 
 ![image](https://user-images.githubusercontent.com/1200981/117580724-f231eb80-b12b-11eb-8777-894d6f796687.png)
 
+gateway 回傳給發送者，現在是手動的，所以需要更改發送者 ble mesh address, 把 0x000d 改為你的發送者 address
+
+![image](https://user-images.githubusercontent.com/1200981/117580886-a29fef80-b12c-11eb-844a-8341eed60426.png)
