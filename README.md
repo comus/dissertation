@@ -35,3 +35,8 @@ uncomment 掉這些程式碼，以一開始用 wifi 獲取時間
 更改 ssid
 
 ![image](https://user-images.githubusercontent.com/1200981/117580572-1b9e4780-b12b-11eb-9b81-a2b807f122f3.png)
+
+更改 coap server 地址
+
+![image](https://user-images.githubusercontent.com/1200981/117580724-f231eb80-b12b-11eb-8777-894d6f796687.png)
+
