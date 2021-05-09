@@ -238,7 +238,7 @@ esp_ble_mesh_msg_ctx_t ctx = {0};
 uint32_t opcode;
 esp_err_t err;
 static coap_uri_t uri;
-const char *server_uri = "coap://localhost";
+const char *server_uri = "coap://localhost/hb";
 
 unsigned char _buf[BUFSIZE];
 unsigned char *buf;
@@ -294,38 +294,38 @@ void btn_click_b()
         }
         
         request = coap_pdu_init(0, 0, 0, 1152 - 4);
-        request->type = COAP_MESSAGE_NON;
+        request->type = COAP_MESSAGE_CON;
         request->tid = ++tx_mid;
         request->code = COAP_REQUEST_GET;
 
         // uint8_t token[1];
         // prng(token, 1);
-        uint8_t token[3];
-        count++;
-        token[0] = (uint8_t)(count >> 8);
-        token[1] = (uint8_t)(count);
-        token[2] = 0;
-        coap_add_token(request, 3, token);
+        // uint8_t token[3];
+        // count++;
+        // token[0] = (uint8_t)(count >> 8);
+        // token[1] = (uint8_t)(count);
+        // token[2] = 0;
+        // coap_add_token(request, 3, token);
 
         coap_add_optlist_pdu(request, &optlist);
 
-        gettimeofday(&tv_now, NULL);
-        int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617120000000;
-        uint32_t t = (uint32_t) cpu_time;
+        // gettimeofday(&tv_now, NULL);
+        // int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617120000000;
+        // uint32_t t = (uint32_t) cpu_time;
 
-        ESP_LOGI(TAG, "The current time is:");
-        ESP_LOGI(TAG, "%" PRIu32 "", t);
+        // ESP_LOGI(TAG, "The current time is:");
+        // ESP_LOGI(TAG, "%" PRIu32 "", t);
 
-        uint8_t payload[8];
-        payload[0] = (uint8_t)(t >> 24);
-        payload[1] = (uint8_t)(t >> 16);
-        payload[2] = (uint8_t)(t >> 8);
-        payload[3] = (uint8_t)(t);
-        payload[4] = (uint8_t)(t >> 24);
-        payload[5] = (uint8_t)(t >> 16);
-        payload[6] = (uint8_t)(t >> 8);
-        payload[7] = (uint8_t)(t);
-        coap_add_data(request, 8, payload);
+        // uint8_t payload[8];
+        // payload[0] = (uint8_t)(t >> 24);
+        // payload[1] = (uint8_t)(t >> 16);
+        // payload[2] = (uint8_t)(t >> 8);
+        // payload[3] = (uint8_t)(t);
+        // payload[4] = (uint8_t)(t >> 24);
+        // payload[5] = (uint8_t)(t >> 16);
+        // payload[6] = (uint8_t)(t >> 8);
+        // payload[7] = (uint8_t)(t);
+        // coap_add_data(request, 8, payload);
 
         coap_pdu_encode_header(request, COAP_PROTO_UDP);
 
@@ -663,43 +663,43 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK( esp_event_loop_create_default() );
-    ESP_ERROR_CHECK(example_connect());
+    // ESP_ERROR_CHECK(esp_netif_init());
+    // ESP_ERROR_CHECK( esp_event_loop_create_default() );
+    // ESP_ERROR_CHECK(example_connect());
 
-    time(&now);
-    localtime_r(&now, &timeinfo);
-    // Is time set? If not, tm_year will be (1970 - 1900).
-    if (timeinfo.tm_year < (2016 - 1900)) {
-        ESP_LOGI(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
+    // time(&now);
+    // localtime_r(&now, &timeinfo);
+    // // Is time set? If not, tm_year will be (1970 - 1900).
+    // if (timeinfo.tm_year < (2016 - 1900)) {
+    //     ESP_LOGI(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
 
-        ESP_LOGI(TAG, "Initializing SNTP");
-        sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        sntp_setservername(0, "pool.ntp.org");
-        sntp_set_time_sync_notification_cb(time_sync_notification_cb);
-        sntp_init();
+    //     ESP_LOGI(TAG, "Initializing SNTP");
+    //     sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    //     sntp_setservername(0, "pool.ntp.org");
+    //     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    //     sntp_init();
 
-        // wait for time to be set
-        while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET) {
-            ESP_LOGI(TAG, "Waiting for system time to be set...");
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
-        }
+    //     // wait for time to be set
+    //     while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET) {
+    //         ESP_LOGI(TAG, "Waiting for system time to be set...");
+    //         vTaskDelay(2000 / portTICK_PERIOD_MS);
+    //     }
 
-        ESP_ERROR_CHECK( example_disconnect() );
-    }
+    //     ESP_ERROR_CHECK( example_disconnect() );
+    // }
 
-    setenv("TZ", "CST-8", 1);
-    tzset();
-    localtime_r(&now, &timeinfo);
+    // setenv("TZ", "CST-8", 1);
+    // tzset();
+    // localtime_r(&now, &timeinfo);
 
-    gettimeofday(&tv_now, NULL);
-    int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617033600000;
-    uint32_t t = (uint32_t) cpu_time;
+    // gettimeofday(&tv_now, NULL);
+    // int64_t cpu_time = (int64_t)tv_now.tv_sec * 1000L + (int64_t)tv_now.tv_usec / 1000 - 1617033600000;
+    // uint32_t t = (uint32_t) cpu_time;
 
-    ESP_LOGI(TAG, "The current time is:");
-    ESP_LOGI(TAG, "%" PRIu32 "\n", t);
-    sprintf(str, "time: %u", t);
-    logger(str, BLUE);
+    // ESP_LOGI(TAG, "The current time is:");
+    // ESP_LOGI(TAG, "%" PRIu32 "\n", t);
+    // sprintf(str, "time: %u", t);
+    // logger(str, BLUE);
 
     board_init();
 
